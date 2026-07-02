@@ -1,4 +1,4 @@
-# Analisis-Lateral-Nuevo
+
 # Análisis Lateral Nuevo
 
 Pipeline modular en Python para el análisis cinemático lateral de marcha en ratones a partir de archivos generados por DeepLabCut.

@@ -30,7 +30,7 @@ Uso recomendado:
     python 03_variables_temporales_y_toe_clearance.py \
         "salida_01/archivo_clean_coords.csv" \
         --cycles "salida_01/archivo_gait_cycles.csv" \
-        --fps 30 \
+        --fps 60 \
         --outdir salida_03_temporal
 
 Si el archivo de ciclos está en la misma carpeta y tiene el nombre estándar del
@@ -68,7 +68,7 @@ import matplotlib.pyplot as plt
 # PARAMETROS EDITABLES
 # =============================================================================
 
-FPS = 30.0
+FPS = 60.0
 
 # Punto usado para estimar apoyo/oscilación y toe clearance.
 # Recomendado inicialmente: "toe". Si el tracking del toe es malo, probar "foot".
@@ -98,12 +98,12 @@ TOE_OFF_THRESHOLD_FRACTION = 0.25
 MIN_CLEARANCE_THRESHOLD_PX = 2.0
 
 # Duraciones mínimas para aceptar apoyo/oscilación.
-# A 30 FPS, 0.05 s ≈ 2 frames.
+# A 60 FPS, 0.05 s ≈ 3 frames.
 MIN_STANCE_DURATION_S = 0.05
 MIN_SWING_DURATION_S = 0.05
 
 # Número de frames consecutivos que deben superar el umbral para declarar toe-off.
-SUSTAIN_FRAMES = 2
+SUSTAIN_FRAMES = 4
 
 # Si True, muestra gráficos al terminar.
 SHOW_PLOTS = False
@@ -820,7 +820,7 @@ def build_argparser() -> argparse.ArgumentParser:
         "--fps",
         type=float,
         default=FPS,
-        help="Frames por segundo del video. Por defecto: 30.",
+        help="Frames por segundo del video. Por defecto: 60.",
     )
     parser.add_argument(
         "--bodypart",
@@ -881,7 +881,7 @@ def build_argparser() -> argparse.ArgumentParser:
         "--sustain-frames",
         type=int,
         default=SUSTAIN_FRAMES,
-        help="Frames consecutivos sobre umbral para detectar toe-off. Por defecto: 2.",
+        help="Frames consecutivos sobre umbral para detectar toe-off. Por defecto: 4.",
     )
     parser.add_argument(
         "--show-plots",

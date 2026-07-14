@@ -1,13 +1,14 @@
+# Análisis Lateral de Marcha Murina con DeepLabCut
 
-# Análisis Lateral Nuevo
+Pipeline modular en Python para analizar marcha murina en vista lateral a partir de coordenadas generadas por DeepLabCut.
 
-Pipeline modular en Python para el análisis cinemático lateral de marcha en ratones a partir de archivos generados por DeepLabCut.
+El flujo está diseñado para procesar videos de locomoción en cinta de correr, detectar ciclos de marcha, calcular goniometría lateral, estimar variables temporales, generar controles visuales y producir un Excel final de validación estadística.
 
-Este repositorio está diseñado para procesar coordenadas de puntos anatómicos obtenidas desde videos laterales de locomoción en cinta de correr. El flujo de trabajo está dividido en scripts cortos e independientes para reducir errores, facilitar la revisión visual y permitir correcciones específicas en cada etapa del análisis.
+---
 
 ## Objetivo del pipeline
 
-El objetivo principal es analizar la marcha murina utilizando coordenadas de DeepLabCut, específicamente los puntos anatómicos:
+Este repositorio permite analizar coordenadas de DeepLabCut correspondientes a los puntos anatómicos:
 
 - `crest`
 - `hip`
@@ -16,17 +17,24 @@ El objetivo principal es analizar la marcha murina utilizando coordenadas de Dee
 - `foot`
 - `toe`
 
-A partir de estos puntos, el pipeline permite:
+A partir de estos puntos, el pipeline calcula:
 
-- Preprocesar coordenadas.
-- Detectar ciclos de marcha.
-- Calcular ángulos articulares.
-- Calcular rangos angulares por ciclo.
-- Calcular variables temporales de marcha.
-- Calcular toe clearance.
-- Exportar archivos de control y revisión.
+- Coordenadas limpias.
+- Eventos y ciclos de marcha.
+- Perfiles de ciclo normalizados a 0–100%.
+- Ángulos articulares laterales.
+- Rangos angulares por ciclo.
+- Tiempo de zancada.
+- Porcentaje de apoyo.
+- Porcentaje de oscilación.
+- Toe clearance.
+- Estadística descriptiva por ciclo y por animal.
+- Normalidad.
+- Dataset balanceado a 10 ciclos por animal.
 
-## Estructura del repositorio
+---
+
+## Estructura recomendada del repositorio
 
 ```text
 Analisis-Lateral-Nuevo/
@@ -34,93 +42,209 @@ Analisis-Lateral-Nuevo/
 ├── 01_preprocesamiento_y_ciclos.py
 ├── 02_goniometria_lateral_por_ciclos.py
 ├── 03_variables_temporales_y_toe_clearance.py
+├── 04_validacion_estadistica_y_excel.py
 ├── README.md
-Requisitos
+```
 
-Este pipeline requiere Python 3.9 o superior.
+---
+
+## Requisitos
+
+Usar Python 3.9 o superior.
 
 Instalar dependencias:
 
-pip install pandas numpy scipy matplotlib tables
+```bash
+pip install pandas numpy scipy matplotlib openpyxl xlsxwriter tables
+```
 
 Dependencias principales:
 
+```text
 pandas
 numpy
 scipy
 matplotlib
+openpyxl
+xlsxwriter
 tables
+```
 
-La librería tables es necesaria para leer archivos .h5 de DeepLabCut.
+La librería `tables` es necesaria para leer archivos `.h5` de DeepLabCut.
 
-Formatos de entrada
+---
 
-El pipeline acepta archivos de salida de DeepLabCut en formato:
+## Formatos de entrada
 
+El pipeline acepta archivos de DeepLabCut en formato:
+
+```text
 .h5
 .csv
+```
 
-Se recomienda trabajar preferentemente con archivos .h5, ya que conservan mejor la estructura original de DeepLabCut:
+Se recomienda usar preferentemente `.h5`, porque conserva mejor la estructura original de DeepLabCut:
 
+```text
 scorer → bodyparts → coords
+```
 
-Cada punto anatómico debe tener coordenadas:
+Cada punto anatómico debe tener:
 
+```text
 x
 y
 likelihood
-Orden general de ejecución
+```
+
+---
+
+## Configuración oficial recomendada para videos a 60 fps
+
+Para el experimento oficial se recomienda grabar y analizar todos los videos a:
+
+```text
+60 fps
+```
+
+Esto mejora la resolución temporal de la marcha y ayuda a capturar mejor eventos rápidos como foot strike, toe-off y swing.
+
+Si los videos fueron grabados a 60 fps, los scripts temporales deben ejecutarse con:
+
+```bash
+--fps 60
+```
+
+También se recomienda dejar estos valores por defecto dentro de los scripts:
+
+### En `01_preprocesamiento_y_ciclos.py`
+
+```python
+FPS = 60.0
+MAX_GAP_INTERPOLATION = 10
+SMOOTH_WINDOW = 7
+MERGE_TOLERANCE_FRAMES = 4
+```
+
+### En `03_variables_temporales_y_toe_clearance.py`
+
+```python
+FPS = 60.0
+SUSTAIN_FRAMES = 4
+```
+
+Los parámetros definidos en segundos no necesitan duplicarse:
+
+```python
+MIN_CYCLE_DURATION_S = 0.12
+MAX_CYCLE_DURATION_S = 1.50
+MIN_STANCE_DURATION_S = 0.05
+MIN_SWING_DURATION_S = 0.05
+```
+
+Estos valores se convierten internamente a frames usando el FPS indicado.
+
+---
+
+## Orden general de ejecución
 
 El análisis debe ejecutarse en este orden:
 
-1. 01_preprocesamiento_y_ciclos.py
-2. 02_goniometria_lateral_por_ciclos.py
-3. 03_variables_temporales_y_toe_clearance.py
+```text
+01 → preprocesamiento, limpieza y ciclos
+02 → goniometría lateral por ciclo
+03 → variables temporales y toe clearance
+04 → Excel de validación estadística, normalidad y datos balanceados
+```
 
-El primer script genera las coordenadas limpias y los ciclos de marcha.
-El segundo script usa esos ciclos para calcular goniometría.
-El tercer script usa los mismos ciclos para calcular variables temporales y toe clearance.
+Flujo completo:
 
-1. Preprocesamiento y detección de ciclos
+```text
+Archivo DeepLabCut .h5/.csv
+        ↓
+01_preprocesamiento_y_ciclos.py
+        ↓
+*_clean_coords.csv
+*_gait_cycles.csv
+        ↓
+02_goniometria_lateral_por_ciclos.py
+        ↓
+*_cycle_angle_ranges.csv
+*_cycle_angle_profiles.csv
+        ↓
+03_variables_temporales_y_toe_clearance.py
+        ↓
+*_gait_temporal_by_cycle.csv
+        ↓
+04_validacion_estadistica_y_excel.py
+        ↓
+Excel final de validación estadística
+```
+
+---
+
+# 1. Preprocesamiento y detección de ciclos
 
 Archivo:
 
+```text
 01_preprocesamiento_y_ciclos.py
+```
 
 Este script realiza:
 
-- Lectura de archivos .h5 o .csv de DeepLabCut.
+- Lectura de archivos `.h5` o `.csv` de DeepLabCut.
 - Extracción de puntos anatómicos.
-- Filtro por likelihood.
-- Interpolación de coordenadas.
+- Filtro por `likelihood`.
+- Interpolación de gaps cortos.
 - Suavizado de coordenadas.
-- Detección de ciclos de marcha.
+- Detección de eventos de marcha.
+- Construcción de ciclos de marcha.
 - Normalización de ciclos a 0–100%.
 - Exportación de archivos de control.
-Método de detección de ciclos
 
-La detección de ciclos se basa principalmente en los puntos distales:
+## Definición del ciclo
 
+La detección usa principalmente los puntos distales:
+
+```text
 toe
 foot
+```
 
-El script construye una señal distal combinada usando la trayectoria horizontal del pie en el eje x.
+El método recomendado es:
 
-La lógica utilizada es:
+```text
+distal_x
+```
 
-Un ciclo de marcha = intervalo entre dos eventos consecutivos del mismo pie.
+El ciclo se define como el intervalo entre dos eventos consecutivos del mismo tipo en la trayectoria distal.
 
-Los puntos hip, knee y ankle no se usan como contacto directo, pero se exportan como señales auxiliares para revisar el patrón locomotor.
+En la versión corregida para este montaje experimental, el inicio del ciclo se fija usando:
 
-Uso básico
-python 01_preprocesamiento_y_ciclos.py "archivo_DLC.h5" --fps 30 --outdir salida_01_ciclos
+```python
+EVENT_POLARITY = "min"
+```
+
+Esto evita que el modo `auto` elija el extremo opuesto y desfase el 0% del ciclo. Si cambia el lado corporal, la cámara o la orientación del montaje, se debe validar nuevamente con el PNG de control.
+
+## Uso básico a 60 fps
+
+```bash
+python 01_preprocesamiento_y_ciclos.py "archivo_DLC.h5" --fps 60 --outdir salida_01_ciclos
+```
 
 También puede usarse con CSV:
 
-python 01_preprocesamiento_y_ciclos.py "archivo_DLC.csv" --fps 30 --outdir salida_01_ciclos
-Parámetros importantes
+```bash
+python 01_preprocesamiento_y_ciclos.py "archivo_DLC.csv" --fps 60 --outdir salida_01_ciclos
+```
+
+## Parámetros importantes
+
+```text
 --fps
-    Frames por segundo del video. Por defecto se recomienda usar 30.
+    Frames por segundo del video. Para el experimento oficial usar 60.
 
 --likelihood-min
     Umbral mínimo de confianza para aceptar coordenadas.
@@ -128,12 +252,25 @@ Parámetros importantes
 --cycle-bodypart
     Punto principal usado para revisar ciclos.
 
+--event-method
+    Método de detección de eventos. Recomendado: distal_x.
+
 --event-polarity
-    Permite elegir si los eventos se detectan como máximos o mínimos de la señal.
+    Polaridad del evento. Para este montaje: min.
+
+--prominence
+    Sensibilidad para detectar eventos.
+
+--contact-bodyparts
+    Puntos distales usados para construir la señal de contacto. Recomendado: toe,foot.
 
 --outdir
     Carpeta donde se guardarán los resultados.
-Archivos de salida
+```
+
+## Archivos de salida
+
+```text
 *_clean_coords.csv
 *_events_detected.csv
 *_gait_cycles.csv
@@ -141,35 +278,42 @@ Archivos de salida
 *_cycle_detection_signals.csv
 *_cycle_detection_check.png
 *_params.txt
-Archivo más importante para revisar
+```
+
+## Archivo más importante para revisar
+
+```text
 *_cycle_detection_check.png
+```
 
-Este gráfico debe revisarse visualmente antes de pasar al segundo y tercer script.
-Si los ciclos no están bien detectados, no se debe continuar con el análisis angular ni temporal.
+Este gráfico debe revisarse visualmente antes de continuar. Si los ciclos no están correctamente detectados, no se debe avanzar al análisis angular ni temporal sin corregir primero el problema.
 
-2. Goniometría lateral por ciclos
+---
+
+# 2. Goniometría lateral por ciclos
 
 Archivo:
 
+```text
 02_goniometria_lateral_por_ciclos.py
+```
 
-Este script realiza:
+Este script usa las salidas del script 01 y calcula:
 
-- Lectura de coordenadas limpias.
-- Lectura de ciclos detectados.
-- Cálculo de ángulos frame a frame.
-- Segmentación angular por ciclo.
-- Normalización angular a 0–100% del ciclo.
-- Cálculo de rango angular por ciclo.
-- Cálculo de media, desviación estándar y SEM por video.
-- Exportación de tablas y gráficos.
+- Ángulos frame a frame.
+- Perfiles angulares por ciclo.
+- Perfiles normalizados a 0–100% del ciclo.
+- Rangos angulares por ciclo.
+- Resumen angular por video.
+- Gráficos de perfiles y control.
 
 Este script no detecta ciclos nuevos. Usa exclusivamente los ciclos generados por el script 01.
 
-Definición de ángulos
+## Definición de ángulos
 
 Los ángulos se calculan usando tres puntos anatómicos:
 
+```text
 hip angle:
     crest - hip - knee
 
@@ -181,27 +325,28 @@ ankle angle:
 
 foot angle:
     ankle - foot - toe
-Rango angular
+```
 
-El rango angular se calcula por ciclo como:
+Las unidades son grados:
 
-rango angular = ángulo máximo - ángulo mínimo
+```text
+°
+```
 
-Se calcula para:
+## Uso básico
 
-hip
-knee
-ankle
-foot
-Uso básico
-python 02_goniometria_lateral_por_ciclos.py "salida_01_ciclos/archivo_clean_coords.csv" --outdir salida_02_angulos
-
-En caso de querer indicar manualmente el archivo de ciclos:
-
-python 02_goniometria_lateral_por_ciclos.py "salida_01_ciclos/archivo_clean_coords.csv" \
+```bash
+python 02_goniometria_lateral_por_ciclos.py \
+  "salida_01_ciclos/archivo_clean_coords.csv" \
   --cycles "salida_01_ciclos/archivo_gait_cycles.csv" \
   --outdir salida_02_angulos
-Archivos de salida
+```
+
+El script 02 no necesita argumento `--fps`, porque calcula ángulos por frame y por ciclo. Los tiempos ya dependen del script 01.
+
+## Archivos de salida
+
+```text
 *_frame_angles.csv
 *_cycle_angle_profiles.csv
 *_cycle_angle_ranges.csv
@@ -209,203 +354,384 @@ Archivos de salida
 *_angle_profiles.png
 *_angle_cycle_control.png
 *_goniometry_params.txt
-Descripción de salidas principales
-Ángulos frame a frame
-*_frame_angles.csv
+```
 
-Contiene los ángulos articulares calculados en cada frame.
+## Archivo más importante para revisar
 
-Perfiles angulares por ciclo
-*_cycle_angle_profiles.csv
-
-Contiene los perfiles angulares normalizados de cada ciclo desde 0 hasta 100%.
-
-Rangos angulares por ciclo
-*_cycle_angle_ranges.csv
-
-Contiene el ángulo mínimo, máximo y rango angular de cada articulación en cada ciclo.
-
-Resumen angular por video
-*_angle_range_summary.csv
-
-Contiene el promedio, desviación estándar y error estándar de la media de los rangos angulares por video.
-
-Variables incluidas:
-
-hip_range_mean_deg
-hip_range_sd_deg
-hip_range_sem_deg
-
-knee_range_mean_deg
-knee_range_sd_deg
-knee_range_sem_deg
-
-ankle_range_mean_deg
-ankle_range_sd_deg
-ankle_range_sem_deg
-
-foot_range_mean_deg
-foot_range_sd_deg
-foot_range_sem_deg
-Archivo más importante para revisar
+```text
 *_angle_cycle_control.png
+```
 
 Este gráfico permite verificar si los ciclos detectados cortan correctamente las señales angulares.
 
-3. Variables temporales y toe clearance
+---
+
+# 3. Variables temporales y toe clearance
 
 Archivo:
 
+```text
 03_variables_temporales_y_toe_clearance.py
+```
 
-Este script calcula únicamente:
+Este script usa las salidas del script 01 y calcula:
 
 - Tiempo de zancada.
+- Duración de apoyo.
+- Duración de oscilación.
 - Porcentaje de apoyo.
 - Porcentaje de oscilación.
 - Toe clearance.
 
 Este script no detecta ciclos nuevos. Usa los ciclos generados por el script 01.
 
-Variables calculadas
-Tiempo de zancada
-Tiempo entre dos contactos consecutivos del mismo pie.
+## Uso básico a 60 fps
 
-Se expresa en segundos.
-
-Porcentaje de apoyo
-Porcentaje del ciclo en que la extremidad se encuentra en fase de apoyo.
-Porcentaje de oscilación
-Porcentaje del ciclo en que la extremidad se encuentra en fase de oscilación.
-
-Se calcula como:
-
-swing_percent = 100 - stance_percent
-Toe clearance
-Elevación máxima del punto toe durante la fase de oscilación.
-
-Se expresa inicialmente en pixeles.
-
-Uso básico
-python 03_variables_temporales_y_toe_clearance.py "salida_01_ciclos/archivo_clean_coords.csv" --fps 30 --outdir salida_03_temporal
-
-En caso de querer indicar manualmente el archivo de ciclos:
-
-python 03_variables_temporales_y_toe_clearance.py "salida_01_ciclos/archivo_clean_coords.csv" \
+```bash
+python 03_variables_temporales_y_toe_clearance.py \
+  "salida_01_ciclos/archivo_clean_coords.csv" \
   --cycles "salida_01_ciclos/archivo_gait_cycles.csv" \
-  --fps 30 \
+  --fps 60 \
   --outdir salida_03_temporal
-Archivos de salida
+```
+
+## Variables calculadas
+
+```text
+stride_duration_s
+    Tiempo de zancada en segundos.
+
+stance_duration_s
+    Duración de apoyo en segundos.
+
+swing_duration_s
+    Duración de oscilación en segundos.
+
+stance_percent
+    Porcentaje del ciclo en fase de apoyo.
+
+swing_percent
+    Porcentaje del ciclo en fase de oscilación.
+
+toe_clearance_px
+    Elevación máxima del toe durante oscilación, en píxeles.
+```
+
+## Unidades
+
+```text
+Tiempos:
+    segundos (s)
+
+Porcentajes:
+    % del ciclo de marcha
+
+Toe clearance:
+    píxeles (px)
+```
+
+Para convertir `toe_clearance_px` a milímetros se necesita una calibración espacial del video:
+
+```text
+mm por píxel
+```
+
+o
+
+```text
+píxeles por mm
+```
+
+## Archivos de salida
+
+```text
 *_gait_temporal_by_cycle.csv
 *_gait_temporal_video_summary.csv
 *_gait_temporal_control.png
 *_toe_clearance_control.png
 *_temporal_params.txt
-Descripción de salidas principales
-Variables por ciclo
+```
+
+## Archivos más importantes para revisar
+
+```text
+*_gait_temporal_control.png
+*_toe_clearance_control.png
+```
+
+Estos gráficos permiten revisar si la separación entre apoyo y oscilación es coherente y si el cálculo de toe clearance es razonable.
+
+---
+
+# 4. Validación estadística y Excel general
+
+Archivo:
+
+```text
+04_validacion_estadistica_y_excel.py
+```
+
+Este script no vuelve a procesar coordenadas ni recalcula ciclos. Usa las salidas de los scripts 02 y 03:
+
+```text
+*_cycle_angle_ranges.csv
 *_gait_temporal_by_cycle.csv
+```
 
-Contiene una fila por ciclo con:
+Objetivo:
 
-cycle_id
-start_frame
-end_frame
+- Unificar resultados por ciclo.
+- Crear tablas por animal.
+- Calcular medias por animal.
+- Calcular descriptivos generales.
+- Evaluar normalidad.
+- Crear datos balanceados a 10 ciclos por animal.
+- Generar un Excel ordenado de validación del pipeline.
+
+## Uso básico
+
+```bash
+python 04_validacion_estadistica_y_excel.py \
+  --input-dir carpeta_resultados_pipeline \
+  --out validacion_estadistica_dlc.xlsx \
+  --include R1,R2,R4,R7 \
+  --balanced-n 10
+```
+
+La lista `--include` debe ajustarse según los animales válidos del experimento.
+
+## Unidad estadística
+
+La unidad estadística principal debe ser:
+
+```text
+animal
+```
+
+No el ciclo individual.
+
+Los ciclos individuales se conservan para revisar dispersión intra-animal, pero la inferencia grupal debe realizarse usando medias por animal.
+
+## Balanceo a 10 ciclos
+
+La opción:
+
+```bash
+--balanced-n 10
+```
+
+crea una hoja balanceada con hasta 10 ciclos por animal. Esto evita que un animal con muchos ciclos tenga más peso visual o descriptivo que otro.
+
+Interpretación:
+
+```text
+Datos por ciclo:
+    sirven para revisar dispersión intra-animal.
+
+Datos balanceados:
+    sirven para descriptivos y visualización equilibrada.
+
+Medias por animal:
+    sirven para estadística principal.
+```
+
+## Hojas principales del Excel
+
+```text
+README
+dataset_selection
+cycles_individual
+cycles_long
+balanced_cycles
+stats_by_animal
+animal_means
+general_stats_n_animal
+normality_cycles_desc
+```
+
+La hoja más importante para análisis posterior es:
+
+```text
+animal_means
+```
+
+---
+
+## Variables principales del análisis
+
+### Variables angulares
+
+```text
+hip_range_deg
+knee_range_deg
+ankle_range_deg
+foot_range_deg
+```
+
+Unidad:
+
+```text
+grados (°)
+```
+
+### Variables temporales
+
+```text
 stride_duration_s
 stance_duration_s
 swing_duration_s
 stance_percent
 swing_percent
+```
+
+Unidades:
+
+```text
+segundos (s)
+porcentaje (%)
+```
+
+### Variable espacial
+
+```text
 toe_clearance_px
-Resumen por video
-*_gait_temporal_video_summary.csv
+```
 
-Contiene resumen del video con media, desviación estándar y SEM:
+Unidad:
 
-stride_duration_s_mean
-stride_duration_s_sd
-stride_duration_s_sem
+```text
+píxeles (px)
+```
 
-stance_percent_mean
-stance_percent_sd
-stance_percent_sem
+---
 
-swing_percent_mean
-swing_percent_sd
-swing_percent_sem
+## Control de calidad obligatorio
 
-toe_clearance_px_mean
-toe_clearance_px_sd
-toe_clearance_px_sem
-Archivos más importantes para revisar
-*_gait_temporal_control.png
-*_toe_clearance_control.png
+Antes de aceptar un video para análisis, revisar:
 
-Estos gráficos permiten revisar si la separación entre apoyo y oscilación es coherente y si el cálculo de toe clearance es correcto.
+```text
+1. Video etiquetado de DeepLabCut.
+2. Likelihood de toe, foot, ankle, knee, hip y crest.
+3. *_cycle_detection_check.png
+4. *_angle_cycle_control.png
+5. *_gait_temporal_control.png
+6. *_toe_clearance_control.png
+```
 
-Flujo completo de análisis
+Un video debe considerarse dudoso si presenta:
 
-Ejemplo de ejecución completa para un archivo .h5:
+```text
+- pérdida frecuente del toe o foot
+- ciclos mal cortados
+- eventos de contacto desplazados
+- pocas zancadas válidas
+- toe clearance incoherente
+- fases de apoyo/oscilación visualmente incorrectas
+- grandes saltos de coordenadas
+```
 
-python 01_preprocesamiento_y_ciclos.py "archivo_DLC.h5" --fps 30 --outdir salida_01_ciclos
+---
 
-Luego:
+## Recomendaciones para grabación oficial
 
-python 02_goniometria_lateral_por_ciclos.py "salida_01_ciclos/archivo_clean_coords.csv" --outdir salida_02_angulos
+Para maximizar el rendimiento de DeepLabCut:
 
-Luego:
+```text
+- Usar 60 fps en todos los videos.
+- Mantener cámara completamente lateral.
+- Mantener misma distancia y altura de cámara.
+- Usar misma resolución en todos los videos.
+- Evitar sombras sobre las patas.
+- Evitar reflejos en la cinta.
+- Mantener buena iluminación.
+- Mantener buen contraste entre animal, pata y fondo.
+- Registrar velocidad de cinta.
+- Registrar grupo, animal, fecha y condición experimental.
+- No mezclar videos de 30 fps y 60 fps dentro del mismo análisis temporal.
+```
 
-python 03_variables_temporales_y_toe_clearance.py "salida_01_ciclos/archivo_clean_coords.csv" --fps 30 --outdir salida_03_temporal
-Recomendaciones importantes
-1. Revisar siempre los gráficos de control
+---
 
-Antes de interpretar los resultados, revisar:
+## Consideraciones metodológicas
 
-*_cycle_detection_check.png
-*_angle_cycle_control.png
-*_gait_temporal_control.png
-*_toe_clearance_control.png
+Para análisis oficial:
 
-Si los ciclos están mal detectados, los resultados posteriores no deben usarse.
+```text
+- Usar el mismo modelo DeepLabCut final para todos los animales.
+- Usar el mismo snapshot para todos los videos oficiales.
+- No ajustar parámetros mirando un grupo específico.
+- Definir criterios de exclusión antes del análisis estadístico final.
+- Usar media por animal como unidad estadística.
+- Usar ciclos individuales solo para descriptivos y visualización.
+```
 
-2. No tratar ciclos como animales independientes
+Para comparaciones futuras, por ejemplo WT vs SOD1, se recomienda que el Excel final tenga una columna:
 
-Los ciclos de marcha son repeticiones dentro del mismo video.
-Para análisis estadístico grupal, se debe usar el promedio por video, animal o estadio, no cada ciclo como una observación independiente.
+```text
+grupo
+```
 
-3. Mantener los scripts separados
+Ejemplo:
 
-Cada script cumple una función específica:
+```text
+animal_id | grupo | variable | media_animal
+WT01      | WT    | hip_range_deg
+SOD101    | SOD1  | hip_range_deg
+```
 
-01 = ciclos
-02 = ángulos
-03 = variables temporales
+La comparación estadística debe realizarse entre animales, no entre ciclos.
 
-Esto permite corregir errores de forma localizada sin modificar todo el pipeline.
+---
 
-4. No subir datos pesados al repositorio
+## Flujo recomendado para experimento oficial
 
-Se recomienda no subir archivos grandes como:
+```text
+1. Grabar todos los videos a 60 fps.
+2. Analizar todos los videos con el mismo modelo DeepLabCut.
+3. Ejecutar script 01 con --fps 60.
+4. Revisar PNG de detección de ciclos.
+5. Ejecutar script 02.
+6. Revisar control angular.
+7. Ejecutar script 03 con --fps 60.
+8. Revisar control temporal y toe clearance.
+9. Ejecutar script 04 para Excel de validación, normalidad y datos balanceados.
+10. Usar medias por animal para análisis estadístico final.
+```
 
-.h5
-.csv
-.mp4
-.mov
-.avi
-.png
+---
 
-Los datos originales y resultados deben almacenarse localmente o en una carpeta externa.
+## Ejemplo de ejecución completa para un video
 
-Archivos sugeridos para ignorar en Git
+```bash
+python 01_preprocesamiento_y_ciclos.py \
+  "videos/WT01_DLC_filtered.h5" \
+  --fps 60 \
+  --outdir resultados/01_WT01
 
-Se recomienda usar un archivo .gitignore con:
+python 02_goniometria_lateral_por_ciclos.py \
+  "resultados/01_WT01/WT01_DLC_filtered_clean_coords.csv" \
+  --cycles "resultados/01_WT01/WT01_DLC_filtered_gait_cycles.csv" \
+  --outdir resultados/02_WT01
 
-*.h5
-*.mp4
-*.avi
-*.mov
-*.csv
-*.png
-salida_*/
-resultados/
-__pycache__/
-.ipynb_checkpoints/
+python 03_variables_temporales_y_toe_clearance.py \
+  "resultados/01_WT01/WT01_DLC_filtered_clean_coords.csv" \
+  --cycles "resultados/01_WT01/WT01_DLC_filtered_gait_cycles.csv" \
+  --fps 60 \
+  --outdir resultados/03_WT01
+```
+
+Después de procesar todos los animales:
+
+```bash
+python 04_validacion_estadistica_y_excel.py \
+  --input-dir resultados \
+  --out validacion_estadistica_dlc.xlsx \
+  --include WT01,WT02,WT03,SOD101,SOD102,SOD103 \
+  --balanced-n 10
+```
+
+---
+
+## Nota final
+
+Este pipeline está pensado para que el análisis sea reproducible, auditable y consistente entre animales. La decisión más importante para evitar sesgos es mantener constantes el modelo DeepLabCut, los parámetros de análisis y los criterios de inclusión durante todo el experimento oficial.

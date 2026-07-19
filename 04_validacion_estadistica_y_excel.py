@@ -24,17 +24,17 @@ Uso básico:
     python 04_validacion_estadistica_y_excel.py \
         --input-dir dlc_pipeline_run_20260703 \
         --out validacion_estadistica_dlc.xlsx \
-        --include R1,R2,R4,R7 \
-        --exclude R3,R6,R8 \
+        --include 856,857,859,860 \
+        --exclude 861,862,863 \
         --balanced-n 10
 
 Uso con análisis de sensibilidad incluyendo R6:
     python 04_validacion_estadistica_y_excel.py \
         --input-dir dlc_pipeline_run_20260703 \
         --out validacion_estadistica_dlc.xlsx \
-        --include R1,R2,R4,R7 \
-        --exclude R3,R6,R8 \
-        --sensitivity-include R1,R2,R4,R6,R7 \
+        --include 856,857,859,860 \
+        --exclude 861,862,863 \
+        --sensitivity-include 856,857,859,860,861 \
         --balanced-n 10
 
 Notas metodológicas:
@@ -102,22 +102,59 @@ ID_COLUMNS = [
 # =============================================================================
 
 def parse_list(value: Optional[str]) -> List[str]:
-    """Convierte 'R1,R2,R4' en lista limpia. Si value es None o vacío, devuelve []."""
+    """Convierte una lista CSV de IDs (p. ej. '856,857,859' o 'R1,R2') en una lista limpia."""
     if value is None:
         return []
     return [x.strip() for x in str(value).split(",") if x.strip()]
 
 
 def parse_animal_id(text: str) -> str:
-    """Extrae IDs tipo R1, R2, R10 desde el nombre del archivo/carpeta."""
+    """
+    Extrae un ID de animal desde nombres de dataset/archivo.
+
+    Formatos soportados:
+      - R1, R2, R10 (formato histórico).
+      - 856_P30, 857_P30DLC_..., etc. (formato actual).
+      - Un ID numérico al inicio seguido de '_' o '-' como respaldo.
+
+    Para nombres actuales como ``856_P30DLC_...`` devuelve ``856``; P30 se
+    conserva dentro de ``dataset_id`` pero no forma parte del identificador único
+    del animal.
+    """
+    text = str(text)
+
+    # Formato histórico: R seguido de dígitos.
     m = re.search(r"(^|[^A-Za-z0-9])(R\d+)([^A-Za-z0-9]|$)", text, flags=re.IGNORECASE)
     if not m:
-        # Respaldo: buscar R seguido de números en cualquier posición.
         m = re.search(r"R\d+", text, flags=re.IGNORECASE)
     if m:
-        token = m.group(2) if len(m.groups()) >= 2 else m.group(0)
+        token = m.group(2) if len(m.groups()) >= 2 and m.group(2) else m.group(0)
         return token.upper()
+
+    # Formato actual: 856_P30..., 857_P30..., etc.
+    m = re.search(r"(?:^|[^0-9])(\d+)_P\d+", text, flags=re.IGNORECASE)
+    if m:
+        return m.group(1)
+
+    # Respaldo conservador: ID numérico al inicio antes de '_' o '-'.
+    m = re.match(r"^(\d{2,})(?=[_-])", text)
+    if m:
+        return m.group(1)
+
     return "UNKNOWN"
+
+
+def normalize_animal_filter_id(value: str) -> str:
+    """Normaliza IDs usados en --include/--exclude al mismo formato de animal_id."""
+    token = str(value).strip()
+    if not token:
+        return token
+    parsed = parse_animal_id(token)
+    if parsed != "UNKNOWN":
+        return parsed.upper()
+    if re.fullmatch(r"\d+", token):
+        return token
+    return token.upper()
 
 
 def clean_stem_from_suffix(path: Path, suffix: str) -> str:
@@ -297,6 +334,19 @@ def load_all_datasets(input_dir: Path) -> pd.DataFrame:
         rows.append(read_one_dataset(stem, angle_path, temporal_path))
 
     out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+    # Nunca deduplicar silenciosamente datasets cuyo animal no pudo identificarse.
+    # Eso podría colapsar varios animales distintos bajo el ID "UNKNOWN".
+    if not out.empty and "animal_id" in out.columns:
+        unknown = sorted(out.loc[out["animal_id"].astype(str).eq("UNKNOWN"), "dataset_id"].astype(str).unique())
+        if unknown:
+            preview = ", ".join(unknown[:10])
+            more = " ..." if len(unknown) > 10 else ""
+            raise ValueError(
+                "No pude identificar el animal en uno o más datasets: "
+                f"{preview}{more}. Use nombres tipo 856_P30..., 857_P30... o R1/R2. "
+                "Se detuvo el análisis para evitar deduplicar animales distintos como UNKNOWN."
+            )
     return out
 
 
@@ -361,14 +411,16 @@ def deduplicate_best_dataset(cycles: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Dat
 
 
 def filter_animals(cycles: pd.DataFrame, include: List[str], exclude: List[str]) -> pd.DataFrame:
-    """Aplica criterios de inclusión/exclusión por animal."""
+    """Aplica criterios de inclusión/exclusión por animal con IDs normalizados."""
     out = cycles.copy()
+    animal_ids = out["animal_id"].astype(str).str.upper()
     if include:
-        include_set = {x.upper() for x in include}
-        out = out[out["animal_id"].str.upper().isin(include_set)].copy()
+        include_set = {normalize_animal_filter_id(x) for x in include if str(x).strip()}
+        out = out[animal_ids.isin(include_set)].copy()
+        animal_ids = out["animal_id"].astype(str).str.upper()
     if exclude:
-        exclude_set = {x.upper() for x in exclude}
-        out = out[~out["animal_id"].str.upper().isin(exclude_set)].copy()
+        exclude_set = {normalize_animal_filter_id(x) for x in exclude if str(x).strip()}
+        out = out[~animal_ids.isin(exclude_set)].copy()
     return out.reset_index(drop=True)
 
 
@@ -654,9 +706,9 @@ def make_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument("--input-dir", required=True, help="Carpeta raíz donde están las salidas del pipeline 02 y 03.")
     p.add_argument("--out", default="validacion_estadistica_dlc.xlsx", help="Ruta del Excel de salida.")
-    p.add_argument("--include", default="", help="Animales a incluir en análisis principal, separados por coma. Ej: R1,R2,R4,R7")
-    p.add_argument("--exclude", default="", help="Animales a excluir del análisis principal, separados por coma. Ej: R3,R6,R8")
-    p.add_argument("--sensitivity-include", default="", help="Animales para análisis de sensibilidad. Ej: R1,R2,R4,R6,R7")
+    p.add_argument("--include", default="", help="Animales a incluir en análisis principal, separados por coma. Ej: 856,857,859,860 (también admite R1,R2,...)")
+    p.add_argument("--exclude", default="", help="Animales a excluir del análisis principal, separados por coma. Ej: 861,862,863 (también admite R3,R6,...)")
+    p.add_argument("--sensitivity-include", default="", help="Animales para análisis de sensibilidad. Ej: 856,857,859,860,861")
     p.add_argument("--balanced-n", type=int, default=10, help="Máximo de ciclos por animal para hoja balanceada.")
     p.add_argument("--no-deduplicate", action="store_true", help="No elegir automáticamente el mejor dataset si hay duplicados por animal.")
     return p

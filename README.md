@@ -1,3 +1,4 @@
+[README(6) (1).md](https://github.com/user-attachments/files/30171215/README.6.1.md)
 # Análisis Lateral de Marcha Murina con DeepLabCut
 
 Pipeline modular en Python para analizar marcha murina en vista lateral a partir de coordenadas generadas por DeepLabCut.
@@ -5,6 +6,9 @@ Pipeline modular en Python para analizar marcha murina en vista lateral a partir
 El flujo está diseñado para procesar videos de locomoción en cinta de correr, detectar ciclos de marcha, calcular goniometría lateral, estimar variables temporales, generar controles visuales y producir un Excel final de validación estadística.
 
 ---
+> **Configuración actual del proyecto P30:** `LIKELIHOOD_MIN = 0.70`, `FPS = 60`, `SMOOTH_WINDOW = 11`. El script 04 reconoce automáticamente IDs como `856_P30`, `857_P30`, etc., evitando agruparlos como `UNKNOWN`.
+
+
 
 ## Objetivo del pipeline
 
@@ -121,8 +125,9 @@ También se recomienda dejar estos valores por defecto dentro de los scripts:
 
 ```python
 FPS = 60.0
+LIKELIHOOD_MIN = 0.70
 MAX_GAP_INTERPOLATION = 10
-SMOOTH_WINDOW = 7
+SMOOTH_WINDOW = 11
 MERGE_TOLERANCE_FRAMES = 4
 ```
 
@@ -247,10 +252,13 @@ python 01_preprocesamiento_y_ciclos.py "archivo_DLC.csv" --fps 60 --outdir salid
     Frames por segundo del video. Para el experimento oficial usar 60.
 
 --likelihood-min
-    Umbral mínimo de confianza para aceptar coordenadas.
+    Umbral mínimo de confianza para aceptar coordenadas. Default oficial: 0.70.
 
---cycle-bodypart
-    Punto principal usado para revisar ciclos.
+--max-gap
+    Longitud máxima configurada para interpolación de gaps cortos. Default: 10 frames.
+
+--smooth-window
+    Ventana de suavizado; se fuerza a impar. Default oficial: 11.
 
 --event-method
     Método de detección de eventos. Recomendado: distal_x.
@@ -263,6 +271,9 @@ python 01_preprocesamiento_y_ciclos.py "archivo_DLC.csv" --fps 60 --outdir salid
 
 --contact-bodyparts
     Puntos distales usados para construir la señal de contacto. Recomendado: toe,foot.
+
+--rhythm-bodyparts
+    Puntos auxiliares exportados para control del ritmo; no definen el contacto.
 
 --outdir
     Carpeta donde se guardarán los resultados.
@@ -481,24 +492,30 @@ Este script no vuelve a procesar coordenadas ni recalcula ciclos. Usa las salida
 Objetivo:
 
 - Unificar resultados por ciclo.
+- Conservar todos los animales, datasets y ciclos encontrados.
 - Crear tablas por animal.
 - Calcular medias por animal.
 - Calcular descriptivos generales.
 - Evaluar normalidad.
-- Crear datos balanceados a 10 ciclos por animal.
-- Generar un Excel ordenado de validación del pipeline.
+- Generar un Excel ordenado y auditable.
+
+## Política para los datos reales P30
+
+El script 04 **no excluye animales**, **no excluye datasets** y **no deduplica automáticamente**.
+Las banderas de control de calidad (`accepted_temporal`, `reject_reason`, etc.) se conservan
+en el Excel, pero las filas originales permanecen disponibles para auditoría.
 
 ## Uso básico
 
 ```bash
 python 04_validacion_estadistica_y_excel.py \
   --input-dir carpeta_resultados_pipeline \
-  --out validacion_estadistica_dlc.xlsx \
-  --include R1,R2,R4,R7 \
-  --balanced-n 10
+  --out validacion_estadistica_dlc.xlsx
 ```
 
-La lista `--include` debe ajustarse según los animales válidos del experimento.
+El script reconoce IDs históricos tipo `R1`, `R2` y el formato actual
+`856_P30...`, `857_P30...`; para este último usa `856`, `857`, etc. como
+`animal_id` y conserva el nombre completo como `dataset_id`.
 
 ## Unidad estadística
 
@@ -512,37 +529,22 @@ No el ciclo individual.
 
 Los ciclos individuales se conservan para revisar dispersión intra-animal, pero la inferencia grupal debe realizarse usando medias por animal.
 
-## Balanceo a 10 ciclos
+## Conservación de datos
 
-La opción:
+La hoja `cycles_individual_all` contiene todos los ciclos descubiertos por el pipeline 02/03.
+No se recorta a un número fijo de ciclos por animal en el script 04.
 
-```bash
---balanced-n 10
-```
-
-crea una hoja balanceada con hasta 10 ciclos por animal. Esto evita que un animal con muchos ciclos tenga más peso visual o descriptivo que otro.
-
-Interpretación:
-
-```text
-Datos por ciclo:
-    sirven para revisar dispersión intra-animal.
-
-Datos balanceados:
-    sirven para descriptivos y visualización equilibrada.
-
-Medias por animal:
-    sirven para estadística principal.
-```
+La hoja `data_retention_all` sirve como auditoría explícita de que cada animal y dataset
+permanece incluido.
 
 ## Hojas principales del Excel
 
 ```text
 README
-dataset_selection
-cycles_individual
-cycles_long
-balanced_cycles
+dataset_qc_all
+data_retention_all
+cycles_individual_all
+cycles_long_finite
 stats_by_animal
 animal_means
 general_stats_n_animal
@@ -660,7 +662,7 @@ Para análisis oficial:
 - Usar el mismo modelo DeepLabCut final para todos los animales.
 - Usar el mismo snapshot para todos los videos oficiales.
 - No ajustar parámetros mirando un grupo específico.
-- Definir criterios de exclusión antes del análisis estadístico final.
+- No excluir animales o datasets automáticamente; cualquier decisión futura debe ser explícita, documentada y realizada fuera del script 04.
 - Usar media por animal como unidad estadística.
 - Usar ciclos individuales solo para descriptivos y visualización.
 ```
@@ -694,7 +696,7 @@ La comparación estadística debe realizarse entre animales, no entre ciclos.
 6. Revisar control angular.
 7. Ejecutar script 03 con --fps 60.
 8. Revisar control temporal y toe clearance.
-9. Ejecutar script 04 para Excel de validación, normalidad y datos balanceados.
+9. Ejecutar script 04 para Excel de validación y normalidad conservando todos los datos.
 10. Usar medias por animal para análisis estadístico final.
 ```
 
@@ -725,13 +727,11 @@ Después de procesar todos los animales:
 ```bash
 python 04_validacion_estadistica_y_excel.py \
   --input-dir resultados \
-  --out validacion_estadistica_dlc.xlsx \
-  --include WT01,WT02,WT03,SOD101,SOD102,SOD103 \
-  --balanced-n 10
+  --out validacion_estadistica_dlc.xlsx
 ```
 
 ---
 
 ## Nota final
 
-Este pipeline está pensado para que el análisis sea reproducible, auditable y consistente entre animales. La decisión más importante para evitar sesgos es mantener constantes el modelo DeepLabCut, los parámetros de análisis y los criterios de inclusión durante todo el experimento oficial.
+Este pipeline está pensado para que el análisis sea reproducible, auditable y consistente entre animales. La decisión más importante para evitar sesgos es mantener constantes el modelo DeepLabCut, los parámetros de análisis y las reglas de control de calidad durante todo el experimento oficial. El script 04 de datos reales conserva todos los animales, datasets y ciclos.

@@ -1,4 +1,3 @@
-[README(6) (1).md](https://github.com/user-attachments/files/30171215/README.6.1.md)
 # Análisis Lateral de Marcha Murina con DeepLabCut
 
 Pipeline modular en Python para analizar marcha murina en vista lateral a partir de coordenadas generadas por DeepLabCut.

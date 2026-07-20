@@ -81,6 +81,12 @@ MAX_CYCLE_DURATION_S = 1.50
 NORM_POINTS = 101
 DEFAULT_PROMINENCE_Z = 0.10
 
+# Metadatos del experimento P30 Day 1.
+# No modifican el algoritmo; quedan registrados para trazabilidad.
+DEFAULT_TREADMILL_SPEED_CM_S = 20.0
+DEFAULT_SEX = "male"
+DEFAULT_LITTER_ID = "P30_single_shared_litter"
+
 def sanitize_stem(path: Path) -> str:
     """Genera un stem seguro para nombres de salida."""
     return path.stem.replace(" ", "_").replace(".", "_")
@@ -743,6 +749,9 @@ def write_params(
     n_events: int,
     n_cycles: int,
     n_accepted: int,
+    treadmill_speed_cm_s: float,
+    sex: str,
+    litter_id: str,
 ) -> None:
     """Guarda un registro reproducible de la ejecución."""
     lines = [
@@ -762,6 +771,9 @@ def write_params(
         f"n_events = {n_events}",
         f"n_cycles_total = {n_cycles}",
         f"n_cycles_accepted = {n_accepted}",
+        f"treadmill_speed_cm_s = {treadmill_speed_cm_s}",
+        f"sex = {sex}",
+        f"litter_id = {litter_id}",
         "event_primary = local minimum of toe_x - hip_x",
         "event_confirmation_A = nearby minimum of knee angle hip-knee-ankle",
         "event_confirmation_B = nearby knee_x-hip_x extremum AND nearby hip angle crest-hip-knee extremum",
@@ -784,6 +796,9 @@ def run_pipeline(
     prominence_z: float = DEFAULT_PROMINENCE_Z,
     norm_points: int = NORM_POINTS,
     make_plot: bool = True,
+    treadmill_speed_cm_s: float = DEFAULT_TREADMILL_SPEED_CM_S,
+    sex: str = DEFAULT_SEX,
+    litter_id: str = DEFAULT_LITTER_ID,
 ) -> Dict[str, Path]:
     """Ejecuta limpieza, detección multiseñal, construcción de ciclos y exportación."""
     input_file = Path(input_file)
@@ -889,6 +904,9 @@ def run_pipeline(
         n_events=n_events,
         n_cycles=n_cycles,
         n_accepted=n_accepted,
+        treadmill_speed_cm_s=treadmill_speed_cm_s,
+        sex=sex,
+        litter_id=litter_id,
     )
 
     print(f"{stem}: {n_events} eventos -> {n_cycles} ciclos ({n_accepted} aceptados)")
@@ -922,6 +940,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-cycle-s", type=float, default=MAX_CYCLE_DURATION_S)
     p.add_argument("--prominence-z", type=float, default=DEFAULT_PROMINENCE_Z)
     p.add_argument("--norm-points", type=int, default=NORM_POINTS)
+    p.add_argument("--treadmill-speed-cm-s", type=float, default=DEFAULT_TREADMILL_SPEED_CM_S,
+                   help="Metadato experimental. P30 Day 1: 20 cm/s.")
+    p.add_argument("--sex", type=str, default=DEFAULT_SEX,
+                   help="Metadato experimental. P30 Day 1: male.")
+    p.add_argument("--litter-id", type=str, default=DEFAULT_LITTER_ID,
+                   help="Metadato experimental. P30 Day 1: una sola camada compartida.")
     p.add_argument("--no-plot", action="store_true", help="No generar PNG de control")
     return p
 
@@ -942,6 +966,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             prominence_z=args.prominence_z,
             norm_points=args.norm_points,
             make_plot=not args.no_plot,
+            treadmill_speed_cm_s=args.treadmill_speed_cm_s,
+            sex=args.sex,
+            litter_id=args.litter_id,
         )
     except Exception as exc:
         print(f"ERROR: {exc}")

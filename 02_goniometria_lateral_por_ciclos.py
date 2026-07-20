@@ -45,6 +45,13 @@ Definición angular por defecto: internal
     ankle = ángulo knee-ankle-foot
     foot  = ángulo ankle-foot-toe
 
+Nota P30 Day 1:
+- Todos los animales fueron grabados a 20 cm/s, son machos y pertenecen a una
+  única camada compartida. Estos factores son constantes y no entran en el
+  cálculo geométrico de los ángulos.
+- El suavizado ocurre aguas arriba en el script 01; esta etapa no vuelve a
+  suavizar las coordenadas.
+
 Autor: pipeline preparado para análisis DLC de marcha murina.
 """
 

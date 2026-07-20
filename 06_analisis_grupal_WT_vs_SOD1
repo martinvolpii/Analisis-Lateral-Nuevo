@@ -1,0 +1,352 @@
+from __future__ import annotations
+
+from pathlib import Path
+import shutil, math, json
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import stats
+
+ROOT = Path('/mnt/data/P30')
+IND = ROOT / 'Individual'
+GRP = ROOT / 'Grupal comparativo'
+SRC05 = Path('/mnt/data/P30_work/05_grouped')
+
+GROUPS = {
+    856:'SOD1', 857:'SOD1', 859:'SOD1',
+    860:'WT', 861:'WT', 862:'SOD1', 863:'WT',
+    864:'SOD1', 865:'SOD1', 867:'WT'
+}
+
+GROUP_COLORS = {'WT':'#3B82F6','SOD1':'#DC2626'}
+JOINTS = [
+    ('hip','Cadera','Cadera ROM medio (°)','hip_range_deg','#2563EB'),
+    ('knee','Rodilla','Rodilla ROM medio (°)','knee_range_deg','#F59E0B'),
+    ('ankle','Tobillo','Tobillo ROM medio (°)','ankle_range_deg','#16A34A'),
+    ('foot','Pie','Pie ROM medio (°)','foot_range_deg','#DC2626'),
+]
+TEMP_VARS = [
+    ('Zancada media (s)','Duración de zancada (s)','stride_duration_s_mean'),
+    ('stance_duration_s_mean','Duración de apoyo (s)','stance_duration_s_mean'),
+    ('swing_duration_s_mean','Duración de oscilación (s)','swing_duration_s_mean'),
+    ('stance_percent_mean','Apoyo (%)','stance_percent_mean'),
+    ('swing_percent_mean','Oscilación (%)','swing_percent_mean'),
+    ('Toe clearance medio (px)','Toe clearance (px)','toe_clearance_px_mean'),
+]
+
+
+def ensure(p: Path):
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def sem(x):
+    x=np.asarray(x,dtype=float); x=x[np.isfinite(x)]
+    return np.std(x,ddof=1)/np.sqrt(len(x)) if len(x)>1 else np.nan
+
+
+def bh_adjust(pvals):
+    p=np.asarray(pvals,dtype=float)
+    out=np.full_like(p,np.nan)
+    finite=np.isfinite(p)
+    vals=p[finite]
+    if len(vals)==0:return out
+    order=np.argsort(vals); ranked=vals[order]
+    adj=np.empty_like(ranked)
+    m=len(ranked)
+    for i,val in enumerate(ranked, start=1): adj[i-1]=val*m/i
+    for i in range(m-2,-1,-1): adj[i]=min(adj[i],adj[i+1])
+    adj=np.clip(adj,0,1)
+    tmp=np.empty_like(vals); tmp[order]=adj; out[finite]=tmp
+    return out
+
+
+def hedges_g(x,y):
+    x=np.asarray(x,dtype=float); y=np.asarray(y,dtype=float)
+    x=x[np.isfinite(x)]; y=y[np.isfinite(y)]
+    n1,n2=len(x),len(y)
+    if n1<2 or n2<2:return np.nan
+    s1=np.var(x,ddof=1); s2=np.var(y,ddof=1)
+    sp=np.sqrt(((n1-1)*s1+(n2-1)*s2)/(n1+n2-2))
+    if not np.isfinite(sp) or sp==0:return np.nan
+    d=(np.mean(x)-np.mean(y))/sp
+    J=1-3/(4*(n1+n2)-9)
+    return J*d
+
+
+def savefig(fig, path: Path):
+    fig.savefig(path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+# ---------------------------------------------------------------------------
+# Clean and rebuild the group-specific sections, preserving General.
+# ---------------------------------------------------------------------------
+for name in ['WT','SOD1','WT vs SOD1']:
+    p=GRP/name
+    if p.exists(): shutil.rmtree(p)
+    ensure(p)
+
+# Mapping and README
+mapping_df=pd.DataFrame([{'Ratón':a,'Genotipo':g} for a,g in sorted(GROUPS.items())])
+mapping_df.to_csv(GRP/'asignacion_grupos.csv',index=False)
+
+# ---------------------------------------------------------------------------
+# Animal-level master table from the already processed individual results.
+# ---------------------------------------------------------------------------
+rows=[]
+for aid, group in sorted(GROUPS.items()):
+    base=pd.read_csv(IND/str(aid)/'Resumen'/'resumen_animal.csv').iloc[0].to_dict()
+    temp=pd.read_csv(IND/str(aid)/'Variables temporales'/'resumen_video.csv').iloc[0]
+    base['Genotipo']=group
+    for c in ['stance_duration_s_mean','swing_duration_s_mean','stance_percent_mean','swing_percent_mean']:
+        base[c]=temp[c]
+    rows.append(base)
+master=pd.DataFrame(rows).sort_values(['Genotipo','Animal']).reset_index(drop=True)
+
+# Top10 scalar summaries per animal / joint
+tr=[]
+for aid, group in sorted(GROUPS.items()):
+    f=IND/str(aid)/'Goniometría'/'Top 10'/'rangos_top10.csv'
+    df=pd.read_csv(f)
+    for joint,label,_,range_col,_ in JOINTS:
+        d=df[df['articulacion'].eq(label)]
+        vals=pd.to_numeric(d[range_col],errors='coerce').dropna()
+        maxcol=f'{joint}_max_deg'
+        maxvals=pd.to_numeric(d[maxcol],errors='coerce').dropna() if maxcol in d.columns else pd.Series(dtype=float)
+        tr.append({
+            'Animal':aid,'Genotipo':group,'Articulación':label,
+            'n_ciclos_top10':len(vals),
+            'ROM_top10_media_deg':vals.mean(),
+            'ROM_top10_sd_deg':vals.std(ddof=1),
+            'Angulo_max_top10_media_deg':maxvals.mean(),
+        })
+top10_scalar=pd.DataFrame(tr)
+
+# ---------------------------------------------------------------------------
+# Per-group folders
+# ---------------------------------------------------------------------------
+profiles_animal=pd.read_csv(SRC05/'Tablas'/'perfiles_promedio_por_animal.csv')
+profiles_group=pd.read_csv(SRC05/'Tablas'/'perfiles_promedio_por_grupo.csv')
+selected=pd.read_csv(SRC05/'Tablas'/'ciclos_top10_seleccionados.csv')
+
+for group in ['WT','SOD1']:
+    gp=GRP/group
+    gon=ensure(gp/'Goniometría')
+    tem=ensure(gp/'Variables temporales')
+    res=ensure(gp/'Resumen')
+
+    members=master[master['Genotipo']==group].copy()
+    members[['Animal','Genotipo']].to_csv(gp/'integrantes.csv',index=False)
+    members.to_csv(res/'resultados_por_animal.csv',index=False)
+
+    # group-level descriptive table on animal means
+    desc=[]
+    scalar_cols=[x[2] for x in JOINTS]+[x[0] for x in TEMP_VARS]
+    # de-duplicate aliased names
+    scalar_cols=list(dict.fromkeys(scalar_cols))
+    for col in scalar_cols:
+        vals=pd.to_numeric(members[col],errors='coerce').dropna()
+        desc.append({'Variable':col,'n_animales':len(vals),'Media':vals.mean(),'DE':vals.std(ddof=1),'SEM':sem(vals),'Mediana':vals.median(),'Min':vals.min(),'Max':vals.max()})
+    pd.DataFrame(desc).to_csv(res/'resumen_grupo.csv',index=False)
+
+    # Goniometry Top10 outputs from script05
+    src=SRC05/'Grupal comparativo'/group
+    for fn in [f'goniometria_top10_{group}.png', f'goniometria_top10_{group}.pdf']:
+        shutil.copy2(src/fn, gon/fn)
+    profiles_animal[profiles_animal['group']==group].to_csv(gon/'perfiles_top10_por_animal.csv',index=False)
+    profiles_group[profiles_group['group']==group].to_csv(gon/'perfil_top10_promedio_grupo.csv',index=False)
+    selected[selected['group']==group].drop(columns=['profiles_file','ranges_file'],errors='ignore').to_csv(gon/'ciclos_top10_seleccionados.csv',index=False)
+    top10_scalar[top10_scalar['Genotipo']==group].to_csv(gon/'resumen_top10_por_animal.csv',index=False)
+
+    # Complete goniometry animal means
+    gcols=['Animal','Genotipo']+[j[2] for j in JOINTS]
+    members[gcols].to_csv(gon/'rangos_completos_por_animal.csv',index=False)
+
+    # Temporal animal means
+    tcols=['Animal','Genotipo','Ciclos temporales válidos','Ciclos temporales rechazados']+[x[0] for x in TEMP_VARS]
+    members[tcols].to_csv(tem/'variables_temporales_por_animal.csv',index=False)
+
+    # Temporal group descriptive plot: individual points + mean ± SD
+    plotvars=[('Zancada media (s)','Zancada (s)'),('stance_percent_mean','Apoyo (%)'),('swing_percent_mean','Oscilación (%)'),('Toe clearance medio (px)','Toe clearance (px)')]
+    fig,axs=plt.subplots(2,2,figsize=(10,8),constrained_layout=True)
+    rng=np.random.default_rng(17)
+    for ax,(col,label) in zip(axs.flat,plotvars):
+        vals=pd.to_numeric(members[col],errors='coerce').dropna().to_numpy(float)
+        x=np.ones(len(vals))+rng.normal(0,0.025,len(vals))
+        ax.scatter(x,vals,s=48,alpha=.85,color=GROUP_COLORS[group],edgecolor='black',linewidth=.4)
+        m=np.mean(vals); sd=np.std(vals,ddof=1) if len(vals)>1 else 0
+        ax.errorbar([1],[m],yerr=[[sd],[sd]],fmt='o',markersize=8,capsize=5,color='black',linewidth=1.8)
+        ax.set_xlim(.8,1.2); ax.set_xticks([1],[f'{group}\nN={len(vals)}']); ax.set_ylabel(label); ax.grid(axis='y',alpha=.2)
+    fig.suptitle(f'Variables temporales - {group}',fontsize=15,fontweight='bold')
+    savefig(fig,tem/f'variables_temporales_{group}.png')
+
+# ---------------------------------------------------------------------------
+# WT vs SOD1 comparison
+# ---------------------------------------------------------------------------
+cmp=GRP/'WT vs SOD1'
+gon=ensure(cmp/'Goniometría')
+tem=ensure(cmp/'Variables temporales')
+qc=ensure(cmp/'Control de calidad')
+statdir=ensure(cmp/'Estadística exploratoria')
+
+# Copy Top10 group comparison
+src=SRC05/'Grupal comparativo'/'WT vs SOD1'
+for fn in ['comparacion_goniometria_top10.png','comparacion_goniometria_top10.pdf']:
+    shutil.copy2(src/fn,gon/fn)
+
+# Tables
+master.to_csv(cmp/'resultados_por_animal.csv',index=False)
+top10_scalar.to_csv(gon/'resumen_top10_por_animal.csv',index=False)
+profiles_group.to_csv(gon/'perfiles_top10_promedio_por_grupo.csv',index=False)
+
+# Comparison descriptive table (animal is unit)
+comp_rows=[]
+variables=[]
+for joint,label,col,_,_ in JOINTS: variables.append((col,f'{label} ROM completo','deg'))
+variables += [
+    ('Zancada media (s)','Duración de zancada','s'),
+    ('stance_duration_s_mean','Duración de apoyo','s'),
+    ('swing_duration_s_mean','Duración de oscilación','s'),
+    ('stance_percent_mean','Apoyo','%'),
+    ('swing_percent_mean','Oscilación','%'),
+    ('Toe clearance medio (px)','Toe clearance','px'),
+]
+
+infer=[]
+for col,label,unit in variables:
+    wt=pd.to_numeric(master.loc[master.Genotipo=='WT',col],errors='coerce').dropna().to_numpy(float)
+    sod=pd.to_numeric(master.loc[master.Genotipo=='SOD1',col],errors='coerce').dropna().to_numpy(float)
+    row={'Variable':label,'Unidad':unit,
+         'WT_n':len(wt),'WT_media':np.mean(wt),'WT_DE':np.std(wt,ddof=1),'WT_SEM':sem(wt),
+         'SOD1_n':len(sod),'SOD1_media':np.mean(sod),'SOD1_DE':np.std(sod,ddof=1),'SOD1_SEM':sem(sod),
+         'Diferencia_WT_menos_SOD1':np.mean(wt)-np.mean(sod)}
+    comp_rows.append(row)
+    try: t,pw=stats.ttest_ind(wt,sod,equal_var=False,nan_policy='omit')
+    except: t,pw=np.nan,np.nan
+    try: u,pm=stats.mannwhitneyu(wt,sod,alternative='two-sided',method='exact')
+    except: u,pm=np.nan,np.nan
+    infer.append({**row,'Welch_t':t,'Welch_p':pw,'Mann_Whitney_U':u,'Mann_Whitney_p':pm,'Hedges_g_WT_menos_SOD1':hedges_g(wt,sod)})
+comp_df=pd.DataFrame(comp_rows)
+comp_df.to_csv(cmp/'resumen_comparativo.csv',index=False)
+infer_df=pd.DataFrame(infer)
+infer_df['Welch_p_FDR_BH']=bh_adjust(infer_df['Welch_p'].to_numpy(float))
+infer_df['Mann_Whitney_p_FDR_BH']=bh_adjust(infer_df['Mann_Whitney_p'].to_numpy(float))
+infer_df.to_csv(statdir/'comparaciones_por_animal.csv',index=False)
+
+# Top10 scalar group summary descriptive
+trdesc=[]
+for (label,group),d in top10_scalar.groupby(['Articulación','Genotipo']):
+    vals=d['ROM_top10_media_deg'].dropna().to_numpy(float)
+    trdesc.append({'Articulación':label,'Genotipo':group,'n_animales':len(vals),'Media_ROM_top10_deg':np.mean(vals),'DE_entre_animales_deg':np.std(vals,ddof=1),'SEM_deg':sem(vals)})
+pd.DataFrame(trdesc).to_csv(gon/'resumen_rom_top10_por_grupo.csv',index=False)
+
+# Plot: complete ROM per animal, group comparison
+fig,axs=plt.subplots(2,2,figsize=(11,8.5),constrained_layout=True)
+rng=np.random.default_rng(42)
+for ax,(_,label,col,_,jointcolor) in zip(axs.flat,JOINTS):
+    for ix,group in enumerate(['WT','SOD1']):
+        vals=pd.to_numeric(master.loc[master.Genotipo==group,col],errors='coerce').dropna().to_numpy(float)
+        x=np.full(len(vals),ix)+rng.normal(0,.045,len(vals))
+        ax.scatter(x,vals,s=50,color=GROUP_COLORS[group],alpha=.9,edgecolor='black',linewidth=.4,label=group if label=='Cadera' else None)
+        m=vals.mean(); sd=vals.std(ddof=1)
+        ax.errorbar([ix],[m],yerr=[[sd],[sd]],fmt='o',color='black',markersize=7,capsize=5,linewidth=1.6)
+    ax.set_xticks([0,1],['WT','SOD1']); ax.set_ylabel('Rango angular (°)'); ax.set_title(label,fontweight='bold',color=jointcolor); ax.grid(axis='y',alpha=.2)
+fig.suptitle('Goniometría completa - comparación por animal',fontsize=15,fontweight='bold')
+savefig(fig,gon/'comparacion_rango_angular_completo.png')
+
+# Plot: Top10 ROM per animal, group comparison
+fig,axs=plt.subplots(2,2,figsize=(11,8.5),constrained_layout=True)
+rng=np.random.default_rng(43)
+for ax,(_,label,_,_,jointcolor) in zip(axs.flat,JOINTS):
+    dd=top10_scalar[top10_scalar['Articulación']==label]
+    for ix,group in enumerate(['WT','SOD1']):
+        vals=dd.loc[dd.Genotipo==group,'ROM_top10_media_deg'].dropna().to_numpy(float)
+        x=np.full(len(vals),ix)+rng.normal(0,.045,len(vals))
+        ax.scatter(x,vals,s=50,color=GROUP_COLORS[group],alpha=.9,edgecolor='black',linewidth=.4)
+        m=vals.mean(); sd=vals.std(ddof=1)
+        ax.errorbar([ix],[m],yerr=[[sd],[sd]],fmt='o',color='black',markersize=7,capsize=5,linewidth=1.6)
+    ax.set_xticks([0,1],['WT','SOD1']); ax.set_ylabel('ROM medio Top 10 (°)'); ax.set_title(label,fontweight='bold',color=jointcolor); ax.grid(axis='y',alpha=.2)
+fig.suptitle('Goniometría Top 10 - comparación descriptiva por animal',fontsize=15,fontweight='bold')
+savefig(fig,gon/'comparacion_rango_angular_top10.png')
+
+# Temporal comparison plot with individual animals and mean±SD
+plotvars=[('Zancada media (s)','Zancada (s)'),('stance_percent_mean','Apoyo (%)'),('swing_percent_mean','Oscilación (%)'),('Toe clearance medio (px)','Toe clearance (px)')]
+fig,axs=plt.subplots(2,2,figsize=(11,8.5),constrained_layout=True)
+rng=np.random.default_rng(44)
+for ax,(col,label) in zip(axs.flat,plotvars):
+    for ix,group in enumerate(['WT','SOD1']):
+        vals=pd.to_numeric(master.loc[master.Genotipo==group,col],errors='coerce').dropna().to_numpy(float)
+        x=np.full(len(vals),ix)+rng.normal(0,.045,len(vals))
+        ax.scatter(x,vals,s=50,color=GROUP_COLORS[group],alpha=.9,edgecolor='black',linewidth=.4)
+        ax.errorbar([ix],[vals.mean()],yerr=[[vals.std(ddof=1)],[vals.std(ddof=1)]],fmt='o',color='black',markersize=7,capsize=5,linewidth=1.6)
+    ax.set_xticks([0,1],['WT','SOD1']); ax.set_ylabel(label); ax.grid(axis='y',alpha=.2)
+fig.suptitle('Variables temporales - comparación por animal',fontsize=15,fontweight='bold')
+savefig(fig,tem/'comparacion_variables_temporales.png')
+
+# Temporal detailed table
+master[['Animal','Genotipo','Ciclos temporales válidos','Ciclos temporales rechazados']+[x[0] for x in TEMP_VARS]].to_csv(tem/'variables_temporales_por_animal.csv',index=False)
+
+# QC table/plot
+qc_table=master[['Animal','Genotipo','Ciclos detectados','Ciclos aceptados','Ciclos goniometría','Ciclos temporales válidos','Ciclos temporales rechazados']].copy()
+qc_table.to_csv(qc/'control_calidad_por_animal.csv',index=False)
+qcg=qc_table.groupby('Genotipo').agg({'Ciclos goniometría':'sum','Ciclos temporales válidos':'sum','Ciclos temporales rechazados':'sum'}).reset_index()
+qcg.to_csv(qc/'control_calidad_por_grupo.csv',index=False)
+fig,ax=plt.subplots(figsize=(8,5.5))
+x=np.arange(len(qcg)); w=.34
+ax.bar(x-w/2,qcg['Ciclos temporales válidos'],w,label='Temporales válidos',color='#16A34A')
+ax.bar(x+w/2,qcg['Ciclos temporales rechazados'],w,label='Temporales rechazados',color='#DC2626')
+ax.set_xticks(x,qcg['Genotipo']); ax.set_ylabel('Número de ciclos'); ax.set_title('Control de calidad temporal por grupo',fontweight='bold'); ax.legend(); ax.grid(axis='y',alpha=.2)
+savefig(fig,qc/'control_calidad_temporal.png')
+
+# Methods + concise interpretation, avoiding overclaiming
+sig_w=infer_df.loc[infer_df['Welch_p_FDR_BH']<0.05,'Variable'].tolist()
+sig_m=infer_df.loc[infer_df['Mann_Whitney_p_FDR_BH']<0.05,'Variable'].tolist()
+method_txt=f"""ANÁLISIS GRUPAL COMPARATIVO P30
+
+Grupos incluidos
+- WT (n=4): 860, 861, 863, 867
+- SOD1 (n=6): 856, 857, 859, 862, 864, 865
+- Ratón 858: ignorado porque no se entregó un archivo H5 para este análisis.
+
+Criterios
+1. La unidad experimental para comparaciones grupales es el animal, no el ciclo.
+2. Goniometría completa: se resume primero cada animal usando todos sus ciclos goniométricos válidos.
+3. Goniometría Top 10: para cada articulación y animal se seleccionan independientemente los 10 ciclos con mayor ángulo máximo. Los gráficos grupales se construyen promediando primero dentro de cada animal y después entre animales.
+4. Variables temporales dependientes de toe-off usan solo ciclos con accepted_temporal=1. La duración de zancada permanece disponible en todos los ciclos validados por el detector.
+5. Toe clearance se expresa en píxeles; no debe interpretarse como distancia absoluta hasta disponer de calibración espacial.
+6. No se generan datos sintéticos y no se utiliza la estadística del antiguo groupLateral.py.
+
+Estadística exploratoria
+Se incluyen Welch t-test y Mann-Whitney exacto sobre medias por animal, Hedges g y ajuste Benjamini-Hochberg (FDR) para 10 variables. Debido al tamaño muestral pequeño (WT n=4, SOD1 n=6), estas pruebas deben interpretarse como exploratorias y junto con los tamaños de efecto y los datos individuales.
+
+Resultados de multiplicidad
+- Variables con Welch FDR < 0.05: {', '.join(sig_w) if sig_w else 'ninguna'}.
+- Variables con Mann-Whitney FDR < 0.05: {', '.join(sig_m) if sig_m else 'ninguna'}.
+"""
+(statdir/'metodologia_y_criterios.txt').write_text(method_txt,encoding='utf-8')
+
+# Human-readable summary
+summary=[]
+summary.append('RESUMEN COMPARATIVO P30 - WT vs SOD1')
+summary.append('')
+summary.append('WT: 4 animales (860, 861, 863, 867)')
+summary.append('SOD1: 6 animales (856, 857, 859, 862, 864, 865)')
+summary.append('')
+summary.append(f"Ciclos goniométricos: WT {int(master[master.Genotipo=='WT']['Ciclos goniometría'].sum())}, SOD1 {int(master[master.Genotipo=='SOD1']['Ciclos goniometría'].sum())}.")
+summary.append(f"Ciclos temporales válidos: WT {int(master[master.Genotipo=='WT']['Ciclos temporales válidos'].sum())}, SOD1 {int(master[master.Genotipo=='SOD1']['Ciclos temporales válidos'].sum())}.")
+summary.append(f"Ciclos temporales rechazados: WT {int(master[master.Genotipo=='WT']['Ciclos temporales rechazados'].sum())}, SOD1 {int(master[master.Genotipo=='SOD1']['Ciclos temporales rechazados'].sum())}.")
+summary.append('')
+summary.append('Las comparaciones se realizan a nivel de animal. No se detectaron diferencias que permanecieran significativas tras corrección FDR en las variables evaluadas; dado el tamaño muestral, se recomienda interpretar patrones y tamaños de efecto como exploratorios.')
+summary.append('Los perfiles Top 10 son descriptivos y siguen el criterio solicitado de seleccionar los 10 ciclos con mayor ángulo máximo por articulación y por animal.')
+(cmp/'LEEME.txt').write_text('\n'.join(summary),encoding='utf-8')
+
+# Update General summary with genotype column
+ensure(GRP/'General')
+general=master.copy()
+general.to_csv(GRP/'General'/'resumen_individual_con_genotipo.csv',index=False)
+(GRP/'General'/'LEEME.txt').write_text(
+    'P30 - análisis grupal\n\nLa asignación experimental utilizada es: WT = 860, 861, 863, 867; SOD1 = 856, 857, 859, 862, 864, 865.\nEl animal 858 no fue incluido porque no se entregó su H5.\nLos análisis grupales usan al animal como unidad experimental.\n',
+    encoding='utf-8'
+)
+
+print('Rebuilt:', GRP)
